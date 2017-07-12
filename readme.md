@@ -75,7 +75,7 @@ Will Produce:
                   "npipe://"
               ]
 }
-
+```
 If RestartOnChange is set, it will restart the daemon after any change to the configuration
 
 ###cDockerSwarm
