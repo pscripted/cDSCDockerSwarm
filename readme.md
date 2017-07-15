@@ -4,7 +4,7 @@ Management of Docker installation, version, swarm, configuration, and certificat
 
 ### cDockerBinaries
 
-Supports several binary sources, including the Microsoft Docker Provider
+Supports several binary sources, including the Microsoft Docker Provider  
 EE versioning is in place but untested thus far
 
 If the running version is different than desired:  

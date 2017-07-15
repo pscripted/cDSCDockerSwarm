@@ -33,18 +33,19 @@ enum DownloadChannel
     EE
 }
 
-
 # [DscResource()] indicates the class is a DSC resource.
 [DscResource()]
 class cDockerBinaries
 {
-
+    #Ensure binaries are installed or not
     [DscProperty(Key)]
     [Ensure]$Ensure
 
+    #Docker Version in the form of "17.06.0-ce"
     [DscProperty()]
     [string]$version
 
+    #Download Channel for different CE Builds, or EE for microsoft provided
     [DscProperty()]
     [DownloadChannel]$DownloadChannel
 
@@ -76,7 +77,6 @@ class cDockerBinaries
             if ($package) {
                 Write-Verbose "Required version package was found in provider. Installing"
                 Install-Package $package -Update
-
             }
             else {
                 Write-Verbose "Package was not found in provider"
@@ -88,15 +88,15 @@ class cDockerBinaries
             Write-Verbose "Updating Docker binaries from $($dlURL)/docker-$GetVersion.zip"
 
             Invoke-WebRequest "$dlURL/docker-$GetVersion.zip" -UseBasicParsing -OutFile "$($env:temp)\docker.zip"
-
             $DockerRegistered = (Get-Service).Name -contains "Docker"
 
             if ($DockerRegistered) {
                 Stop-Service docker
                 start-sleep 2
             }
-                Expand-Archive -Path "$($env:temp)\docker.zip" -DestinationPath $Env:ProgramFiles -Force
-                Remove-Item -Force "$($env:temp)\docker.zip"      
+
+            Expand-Archive -Path "$($env:temp)\docker.zip" -DestinationPath $Env:ProgramFiles -Force
+            Remove-Item -Force "$($env:temp)\docker.zip"      
             
             if (!$DockerRegistered) {
                 Write-Verbose "Registering Docker Service"
@@ -104,11 +104,8 @@ class cDockerBinaries
                 [Environment]::SetEnvironmentVariable('PATH', $env:Path, 'Machine')
                 . "$($Env:ProgramFiles)\docker\dockerd.exe" --register-service 
             }
-
             Write-Verbose "Starting Docker Service"
             Start-Service docker  
-
-
         }
     }        
     
@@ -125,7 +122,6 @@ class cDockerBinaries
                     else {
                         Write-Verbose "Incorrect docker version installed"
                         return $false
-
                     }
                 }
                 else {
@@ -158,8 +154,8 @@ class cDockerBinaries
                 return $false
             }            
             else {
-                    Write-Verbose "Docker is not installed"
-                    return $false
+                Write-Verbose "Docker is not installed"
+                return $false
             }
         }
     }    
@@ -176,24 +172,22 @@ class cDockerBinaries
             $this.Ensure = [Ensure]::Absent
             $this.version = $null
         }
-        
         return $this
-        
     }    
 }
 
 [DscResource()]
 class cInsecureRegistryCert
 {
-
-    # A DSC resource must define at least one key property.
+    # Registry URI in format "registry:5000"
     [DscProperty(Key)]
     [string]$registryURI
 
+    #Certificate text or read content from file
     [DscProperty(Mandatory)]
     [string]$Certificate
 
-    # Mandatory indicates the property is required and DSC will guarantee it is set.
+    #Ensure Present or Absent
     [DscProperty(Mandatory)]
     [Ensure] $ensure
 
@@ -285,25 +279,31 @@ class cInsecureRegistryCert
 class cDockerConfig
 {
 
-    # A DSC resource must define at least one key property.
+    #Ensure present or absent
     [DscProperty(Key)]
     [Ensure]$Ensure
 
+    #JSON format string of general configuration opstions, not including labels, hosts, and registries
     [DscProperty()]
     [string]$BaseConfigJson='{}'
 
+    #Array of registries to be added to the configuration
     [DscProperty()]
     [string[]] $InsecureRegistries
 
+    #Array of labels to be added to the configuration
     [DscProperty()]
     [string[]] $Labels
 
+    #Daemon binings, defaults to all interfaces. Specify in format of 'tcp://0.0.0.0:2375'
     [DscProperty()]
     [string]$DaemonBinding='tcp://0.0.0.0:2375'
 
+    #Adds named pipe and TCP bindings to configuration, allowing external access. This is required for Swarm mode
     [DscProperty()]
     [boolean] $ExposeAPI
     
+    #Restart docker on any chane of the configuration
     [DscProperty()]
     [boolean] $RestartOnChange
 
@@ -423,17 +423,19 @@ class cDockerConfig
 class cDockerSwarm
 {
 
-    # A DSC resource must define at least one key property.
+    #Swarm Master URl in the format of "10.10.10.10:2377"
     [DscProperty(Key)]
     [string]$SwarmMasterURI
 
-    # Mandatory indicates the property is required and DSC will guarantee it is set.
+    #Activate swarm mode on the host and connect to swarm master. Must be Active or Inactive
     [DscProperty(Mandatory)]
     [Swarm] $SwarmMode
 
+    #Number of managers to attempt of SwarmManagement is automatic. The nodes will join as managers until the number specified is met. 
     [DscProperty()]
     [int] $ManagerCount=3
 
+    #Automatic will manage the number of managers in the swarm. WorkerOnly will join only as worker nodes
     [DscProperty(Mandatory)]
     [SwarmManagement]$SwarmManagement
 
