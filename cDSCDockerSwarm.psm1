@@ -99,8 +99,10 @@ class cDockerBinaries
                 Remove-Item -Force "$($env:temp)\docker.zip"      
             
             if (!$DockerRegistered) {
-                Write-Verbose "Registerin Docker Service"
-                dockerd.exe --register-service
+                Write-Verbose "Registering Docker Service"
+                $Env:Path += ";$($Env:ProgramFiles)\docker"
+                [Environment]::SetEnvironmentVariable('PATH', $env:Path, 'Machine')
+                . "$($Env:ProgramFiles)\docker\dockerd.exe" --register-service 
             }
 
             Write-Verbose "Starting Docker Service"
@@ -195,10 +197,6 @@ class cInsecureRegistryCert
     [DscProperty(Mandatory)]
     [Ensure] $ensure
 
-    # NotConfigurable properties return additional information about the state of the resource.
-    # For example, a Get() method might return the date a resource was last modified.
-    # NOTE: These properties are only used by the Get() method and cannot be set in configuration.        
-
     # Sets the desired state of the resource.
     [void] Set()
     {
@@ -225,14 +223,24 @@ class cInsecureRegistryCert
         $CertPath = "$($env:ProgramData)\docker\certs.d\$($this.registryURI -replace ':','')"
         if ($this.ensure -eq [ensure]::Present) {
             if(test-path "$CertPath\ca.crt") {
-                $currentCert =  New-Object System.Security.Cryptography.X509Certificates.X509Certificate2
-                $currentCert.Import("$CertPath\ca.crt")
-                                    
-                                    
+                try {
+                    $currentCert =  New-Object System.Security.Cryptography.X509Certificates.X509Certificate2
+                    $currentCert.Import("$CertPath\ca.crt")
+                }
+                catch {
+                    Write-Verbose "Invalid Current Cert; could not be imported to test"
+                    return $false
+                }                    
+                
+                try {                    
                 $enc = [system.Text.Encoding]::UTF8
                 $desiredCert =  New-Object System.Security.Cryptography.X509Certificates.X509Certificate2
                 $desiredCert.Import($enc.GetBytes($this.Certificate))
-
+                  }
+                catch {
+                    Write-Verbose "Invalid Desired Certificate defined in configuration; could not be imported to test"
+                    return $false
+                }   
                                    
                 if($currentCert.Thumbprint -eq $desiredCert.Thumbprint) {
 
@@ -250,7 +258,7 @@ class cInsecureRegistryCert
             }
         }
         else {
-            if(test-path "C:\ProgramData\docker\certs.d\$($this.registryURI -replace ':','')\ca.crt") {
+            if(test-path "$($env:ProgramData)\docker\certs.d\$($this.registryURI -replace ':','')\ca.crt") {
                 Write-Verbose "CA Cert for Registry Exists that should not"
                 return $false    
             }
@@ -262,7 +270,7 @@ class cInsecureRegistryCert
     # Gets the resource's current state.
     [cInsecureRegistryCert] Get()
     {        
-        if(test-path "C:\ProgramData\docker\certs.d\$($this.registryURI -replace ':','')\ca.crt") {
+        if(test-path "$($env:ProgramData)\docker\certs.d\$($this.registryURI -replace ':','')\ca.crt") {
             $this.ensure = [ensure]::Present
         }
         else {
@@ -303,14 +311,20 @@ class cDockerConfig
     [void] Set()
     {    
         if ($this.Ensure -eq [Ensure]::Present) {
-              
+            
             $pendingConfiguration = $this.GetPendingConfiguration()
-           
+
+            #Does a config exist at all?
+            $ConfigExists = $this.ConfigExists()
+            Write-Verbose "Config Exists: $ConfigExists" 
             #Write Configuration
             $pendingConfiguration |  Out-File "$($env:ProgramData)\docker\config\daemon.json" -Encoding ascii -Force
-            #Restart docker service if the configuration changed
-            if ($this.RestartOnChange) {
+
+            #Restart docker service if the configuration changed, or if this is the initial configuration
+            if ($this.RestartOnChange -or !($ConfigExists)) {
+                Write-Verbose "Restarting the Docker service"
                 Restart-Service Docker
+                start-sleep 5
             }
         }
         else {
@@ -322,7 +336,7 @@ class cDockerConfig
     [bool] Test()
     {   
         if ($this.Ensure -eq [Ensure]::Present) {     
-            if(Test-Path "$($env:ProgramData)\docker\config\daemon.json"){            
+            if($this.ConfigExists()){            
 			    $currentConfiguration = Get-Content "$($env:ProgramData)\docker\config\daemon.json" -raw
                 $pendingConfigurationJS = $this.GetPendingConfiguration() | Out-String                
 
@@ -341,7 +355,7 @@ class cDockerConfig
 		    }
         }
         else { #Make sure the config is absent
-            if(Test-Path "$($env:ProgramData)\docker\config\daemon.json"){
+            if($this.ConfigExists()){
                 Write-Verbose "daemon.json Exists but should not"
                 return $false
               }
@@ -356,15 +370,31 @@ class cDockerConfig
     # Gets the resource's current state.
     [cDockerConfig] Get()
     {   
-        $ConfigExists = Test-Path "$($env:ProgramData)\docker\config\daemon.json"    
+        $ConfigExists = $this.ConfigExists()    
         if($ConfigExists){            
-            $currentConfiguration = ((Get-Content "$($env:ProgramData)\docker\config\daemon.json") | Out-String | ConvertFrom-Json)    
-            $this.Ensure = [ensure]::Present
+            $currentConfiguration = Get-Content "$($env:ProgramData)\docker\config\daemon.json" -raw
+            $pendingConfigurationJS = $this.GetPendingConfiguration() | Out-String                
+
+            if ($currentConfiguration -eq $pendingConfigurationJS) {
+                $this.Ensure = [ensure]::Present
+            }
+            else {
+                $this.Ensure = [ensure]::Absent
+            }
         }
         else {
             $this.Ensure = [ensure]::Absent
         }
         return $this
+     }
+
+     [bool]ConfigExists() {
+       if (Test-Path "$($env:ProgramData)\docker\config\daemon.json") {
+                return $true
+            }
+            else {
+                return $false
+            }
      }
 
      [string]GetPendingConfiguration() {
@@ -412,35 +442,45 @@ class cDockerSwarm
     # Sets the desired state of the resource.
     [void] Set()
     {    
-        $SwarmDockerHost = $this.swarmURI.Split(':')[0]
+        Write-Verbose "Using Swarm Master: $($this.SwarmMasterURI)"
+        $SwarmDockerHost = $($this.SwarmMasterURI).Split(':')[0]
+        $SwarmManagerIsMe = (Get-NetIPAddress).IPAddress -contains $SwarmDockerHost
+        Write-Verbose "Getting Local Docker info"
 
-        $SwarmInfo = docker -H $SwarmDockerHost info -f '{{ json .Swarm }}' | ConvertFrom-Json
+        $LocalInfo = $this.GetLocalDockerInfo()
+        
+        Write-Verbose "Getting Swarm info from $SwarmDockerHost"
+        $SwarmInfo = . "$($Env:ProgramFiles)\docker\docker.exe" -H $SwarmDockerHost info -f '{{ json .Swarm }}' | ConvertFrom-Json
         $managers = $SwarmInfo.managers
 
-        $LocalInfo = docker info -f '{{ json . }}' | ConvertFrom-Json
+        
         if ($LocalInfo.Swarm.LocalNodeState -eq "active") {
             $InRightSwarm = $LocalInfo.Swarm.RemoteManagers.Addr -contains $this.SwarmMasterURI
             if (!$InRightSwarm) {
                 Write-Verbose "Server is in the wrong swarm; leaving"
-                docker swarm leave -f
+                . "$($Env:ProgramFiles)\docker\docker.exe" swarm leave -f
             }
             elseif ($this.SwarmMode -eq [Swarm]::Inactive) {
                 Write-Verbose "Server is in the a swarm and should be inactive; leaving"
-			    docker swarm leave -f
+			    . "$($Env:ProgramFiles)\docker\docker.exe" swarm leave -f
 		    }
             elseif (($this.SwarmMode -eq [Swarm]::Active) -and ($managers -lt $this.ManagerCount)) {
-                docker -H $SwarmDockerHost node promote $env:COMPUTERNAME
+                . "$($Env:ProgramFiles)\docker\docker.exe" -H $SwarmDockerHost node promote $env:COMPUTERNAME
             }
         }
         elseif ($this.SwarmMode -eq [Swarm]::Active) {
-			$managers = docker -H  $SwarmDockerHost info -f '{{ json .Swarm.Managers }}'
-            if (($this.SwarmManagement -eq [SwarmManagement]::Automatic) -and ($managers -lt $this.ManagerCount)) {
-                $token = docker -H $SwarmDockerHost swarm join-token manager -q
-                docker swarm join --token $token $this.SwarmMasterURI
+            #$managers = docker -H  $SwarmDockerHost info -f '{{ json .Swarm.Managers }}'
+            if ($SwarmManagerIsMe) {
+                Write-Verbose "Creating a new Swarm"
+                . "$($Env:ProgramFiles)\docker\docker.exe" swarm init --advertise-addr $this.SwarmMasterURI
+            }
+            elseif (($this.SwarmManagement -eq [SwarmManagement]::Automatic) -and ($managers -lt $this.ManagerCount)) {
+                Write-Verbose "Joining the Swarm as a manager"
+                $this.JoinSwarm($SwarmDockerHost, "manager")
             }
             else {
-                $token = docker -H $SwarmDockerHost swarm join-token worker -q
-                docker swarm join --token $token $this.SwarmMasterURI
+                Write-Verbose "Joining the Swarm as a worker"
+                $this.JoinSwarm($SwarmDockerHost, "worker")
             }
 		}
 		
@@ -451,7 +491,7 @@ class cDockerSwarm
     {        
 
             
-            $LocalInfo = docker info -f '{{ json . }}' | ConvertFrom-Json
+            $LocalInfo = $this.GetLocalDockerInfo()
             
 			if ($LocalInfo.Swarm.LocalNodeState  -eq "active" -and ($this.SwarmMode -eq [Swarm]::Active)) {
                 Write-Verbose "Swarm is Active"
@@ -501,13 +541,59 @@ class cDockerSwarm
     # Gets the resource's current state.
     [cDockerSwarm] Get()
     {        
-        $SwarmState = docker info -f '{{ json .Swarm.LocalNodeState }}' | ConvertFrom-Json
+        $SwarmState = . "$($Env:ProgramFiles)\docker\docker.exe" info -f '{{ json .Swarm.LocalNodeState }}' | ConvertFrom-Json
 			if ($SwarmState -eq "active"){
 				$this.SwarmMode = [Swarm]::Active
 			}
 			elseif ($SwarmState -eq "inactive") {
-				$this.SwarmMode = [Swarm]::Inctive
+				$this.SwarmMode = [Swarm]::Inactive
 			}
         return $this 
+    }
+    
+    [string]GetLocalDockerInfo(){
+        #Try in a loop, in case docker was just restarted and is not ready yet
+        $info = $null
+        $i = 0
+        while (!$info -and $i -lt 5) { 
+            try{
+                $i++
+                $ErrorActionPreference = 'stop'
+                Write-Verbose "Trying to get token from swarm manager"
+                $info = . "$($Env:ProgramFiles)\docker\docker.exe" info -f '{{ json . }}' | ConvertFrom-Json                
+                break
+            }
+            catch {
+                Write-Verbose "Waiting for local docker to come online"
+                start-sleep 5
+            }            
+        }
+        return $info
+    }
+
+    [void]JoinSwarm($host,$type)
+    {
+        $token = $null
+        $i = 0
+        while (!$token -and $i -lt 5) { 
+            try{
+                $i++
+                $ErrorActionPreference = 'stop'
+                Write-Verbose "Trying to get token from swarm manager"
+                $token = . "$($Env:ProgramFiles)\docker\docker.exe" -H $host swarm join-token $type -q 
+                break
+            }
+            catch {
+                Write-Verbose "Waiting for manager to come online"
+                start-sleep 5
+            }
+        
+        }
+        if ($token) {
+            . "$($Env:ProgramFiles)\docker\docker.exe" swarm join --token $token $this.SwarmMasterURI
+        }
+        else {
+            write-verbose "Failed to Get token; can't join swarm"
+        }
     }    
 }
