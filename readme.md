@@ -1,4 +1,4 @@
-##cDSCDockerSwarm
+## cDSCDockerSwarm
 
 Management of Docker installation, version, swarm, configuration, and certificates on Windows Server 2016
 
@@ -41,7 +41,7 @@ Server:
  Version:      17.06.0-ce
 ```
 
-###cDockerConfig
+### cDockerConfig
 
 Builds and manages the Docker configuration in C:\ProgramData\docker\config\daemon.json
 
@@ -78,7 +78,7 @@ Will Produce:
 ```
 If RestartOnChange is set, it will restart the daemon after any change to the configuration
 
-###cDockerSwarm
+### cDockerSwarm
 
 Manages the state of the swarm, and number of managers if desired. The worker tokens are pulled from the desired manager at the tine of joining. This may need to be adjusted when tls support is added
 
@@ -95,7 +95,7 @@ cDockerSwarm Swarm {
 }
 ```
 
-###cInsecureRegistryCert
+### cInsecureRegistryCert
 
 Manages the certificate for a given local insecure registry that has been defined in cDockerConfig 
 
