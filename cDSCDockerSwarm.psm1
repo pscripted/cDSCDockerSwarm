@@ -77,6 +77,7 @@ class cDockerBinaries
             if ($package) {
                 Write-Verbose "Required version package was found in provider. Installing"
                 Install-Package $package -Update
+                Start-Service Docker
             }
             else {
                 Write-Verbose "Package was not found in provider"
