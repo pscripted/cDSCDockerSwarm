@@ -3,6 +3,10 @@
 Management of Docker installation, version, swarm, configuration, and certificates on Windows Server 2016
 Please see [my Blog on this module](http://www.pscripted.com/docker-dsc/)
 
+Available from the PowerShell Gallery, install with:
+```
+Install-Module -Name cDSCDockerSwarm
+```
 
 ### Pre-recs and other thoughts
 
