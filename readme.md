@@ -76,7 +76,7 @@ While this resource will create all the necessary certificates, telling the conf
 cDockerTLSAutoEnrollment Enrollment 
     {
         Ensure = 'Present'
-        EnrollmentServer = 102.168.10.20
+        EnrollmentServer = "102.168.10.20"
         DependsOn = '[cDockerBinaries]Docker'
     }
 ```

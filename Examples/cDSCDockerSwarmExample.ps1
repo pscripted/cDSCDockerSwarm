@@ -25,26 +25,18 @@ configuration TestDockerSwarm
             DependsOn = '[WindowsFeature]ContainerInstall'
             version = '17.06.0-ce'
             DownloadChannel = 'Stable'
-        }
-		
-       cDockerTLSAutoEnrollment Enrollment 
+        }		
+
+        cDockerConfig Config
        {
             Ensure = 'Present'
-            EnrollmentServer = $ConfigurationData.NonNodeData.masterip
             DependsOn = '[cDockerBinaries]Docker'
-       }
-
-
-       cDockerConfig Config
-       {
-            Ensure = 'Present'
-            DependsOn = '[cDockerTLSAutoEnrollment]Enrollment'
-            RestartOnChange = $false
+            RestartOnChange = $true
             ExposeAPI = $true
-            InsecureRegistries = 'imageregistry.contoso.com:5000'
-            Labels = "com.contoso.environment=test", "com.contoso.winver=core"
-            EnableTLS = $true
-        } 
+            InsecureRegistries = 'myregistry:5000'
+            Labels = "my.environment=test", "my.winver=core"
+        }
+
 
        cDockerSwarm Swarm {
             DependsOn = '[cDockerBinaries]Config'
