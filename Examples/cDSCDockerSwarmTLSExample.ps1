@@ -1,3 +1,10 @@
+$swarmConfig = @{    
+    AllNodes = @()
+    NonNodeData =  @{
+        masterip = (Get-VMNetworkAdapter node1).IPAddresses | where {$_ -notmatch "::"}
+    }   
+}
+
 configuration TestDockerSwarm
 {
 
@@ -25,19 +32,27 @@ configuration TestDockerSwarm
             DownloadChannel = 'Stable'
         }
         
-        cDockerConfig Config
+        cDockerTLSAutoEnrollment Enrollment 
        {
             Ensure = 'Present'
+            EnrollmentServer = $ConfigurationData.NonNodeData.masterip
             DependsOn = '[cDockerBinaries]Docker'
-            RestartOnChange = $true
-            ExposeAPI = $true
-            InsecureRegistries = 'myregistry:5000'
-            Labels = "my.environment=test", "my.winver=core"
-        }
+       }
 
+       cDockerConfig Config
+       {
+            Ensure = 'Present'
+            DependsOn = '[cDockerTLSAutoEnrollment]Enrollment'
+            RestartOnChange = $false
+            ExposeAPI = $true
+            InsecureRegistries = 'imageregistry.contoso.com:5000'
+            Labels = "com.contoso.environment=test", "com.contoso.winver=core"
+            EnableTLS = $true
+        } 
+        
        cDockerSwarm Swarm {
             DependsOn = '[cDockerBinaries]Config'
-            SwarmMasterURI = '10.10.255.255:2377'
+            SwarmMasterURI = "$($ConfigurationData.NonNodeData.masterip):2377"
             SwarmMode = 'Active'
             ManagerCount = 3
             SwarmManagement = 'Automatic'

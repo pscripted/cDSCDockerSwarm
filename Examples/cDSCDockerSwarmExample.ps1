@@ -37,7 +37,6 @@ configuration TestDockerSwarm
             Labels = "my.environment=test", "my.winver=core"
         }
 
-
        cDockerSwarm Swarm {
             DependsOn = '[cDockerBinaries]Config'
             SwarmMasterURI = "$($masterip):2377"
