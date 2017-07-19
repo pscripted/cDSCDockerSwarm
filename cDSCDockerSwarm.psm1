@@ -299,7 +299,7 @@ class cDockerConfig
 
     #Daemon binings, defaults to all interfaces. Specify in format of 'tcp://0.0.0.0:2375'
     [DscProperty()]
-    [string]$DaemonBinding='tcp://0.0.0.0:2375'
+    [string]$DaemonBinding
 
     #Adds named pipe and TCP bindings to configuration, allowing external access. This is required for Swarm mode
     [DscProperty()]
@@ -413,9 +413,7 @@ class cDockerConfig
         if ($this.Labels) {
             $pendingConfiguration | Add-Member -Name "labels" -Value $this.Labels -MemberType NoteProperty
         }
-        if($this.exposeApi -eq $true){
-			$pendingConfiguration | Add-Member -Name "hosts" -MemberType NoteProperty -Value @($this.daemonBinding, "npipe://")
-        }
+
         $CertExists = Test-Path $env:ALLUSERSPROFILE\docker\certs.d\cert.pem
         $KeyExists = Test-Path $env:ALLUSERSPROFILE\docker\certs.d\key.pem
         if ($this.EnableTLS -and $CertExists -and $KeyExists) {
@@ -423,7 +421,28 @@ class cDockerConfig
             $pendingConfiguration | Add-Member -MemberType NoteProperty -Name  "tlscacert" -Value "C:\ProgramData\docker\certs.d\ca.pem"
             $pendingConfiguration | Add-Member -MemberType NoteProperty -Name  "tlscert" -Value "C:\ProgramData\docker\certs.d\cert.pem"
             $pendingConfiguration | Add-Member -MemberType NoteProperty -Name  "tlskey" -Value "C:\ProgramData\docker\certs.d\key.pem"
-            $pendingConfiguration | Add-Member -MemberType NoteProperty -Name  "tlsverify" -Value $true
+            $pendingConfiguration | Add-Member -MemberType NoteProperty -Name  "tlsverify" -Value $true     
+            #Adjust port for TLS
+            if($this.exposeApi -eq $true){
+                if ($this.DaemonBinding) {
+                    $binding = $this.DaemonBinding            
+                }
+                else {
+                    $binding = "tcp://0.0.0.0:2376"
+                }
+			    $pendingConfiguration | Add-Member -Name "hosts" -MemberType NoteProperty -Value @($binding, "npipe://")
+            }       
+        }
+        else{
+            if($this.exposeApi -eq $true){
+                if ($this.DaemonBinding) {
+                    $binding = $this.DaemonBinding            
+                }
+                else {
+                    $binding = "tcp://0.0.0.0:2375"
+                }
+			    $pendingConfiguration | Add-Member -Name "hosts" -MemberType NoteProperty -Value @($binding, "npipe://")
+            }
         }
 
         return $pendingConfiguration | ConvertTo-Json
@@ -465,7 +484,18 @@ class cDockerSwarm
         $LocalInfo = $this.GetLocalDockerInfo()
         
         Write-Verbose "Getting Swarm info from $SwarmDockerHost"
-        $SwarmInfo = . "$($Env:ProgramFiles)\docker\docker.exe" -H $SwarmDockerHost info -f '{{ json .Swarm }}' | ConvertFrom-Json
+        if ((test-netconnection $SwarmDockerHost -Port 2375).tcpTestSucceeded) {
+            $swarmConnString = $SwarmDockerHost
+            $tls = $null
+        }
+        elseif ((test-netconnection $SwarmDockerHost -Port 2376).tcpTestSucceeded) {
+            $swarmConnString = "$($SwarmDockerHost):2376"
+            $tls = "--tlsverify"
+        }
+        else {
+            write-error "no connection to remote swarm manager"
+        }
+        $SwarmInfo = . "$($Env:ProgramFiles)\docker\docker.exe" -H $swarmConnString $tls info -f '{{ json .Swarm }}' | ConvertFrom-Json
         $managers = $SwarmInfo.managers
         
         if ($LocalInfo.Swarm.LocalNodeState -eq "active") {
@@ -479,22 +509,22 @@ class cDockerSwarm
 			    . "$($Env:ProgramFiles)\docker\docker.exe" swarm leave -f
 		    }
             elseif (($this.SwarmMode -eq [Swarm]::Active) -and ($managers -lt $this.ManagerCount)) {
-                . "$($Env:ProgramFiles)\docker\docker.exe" -H $SwarmDockerHost node promote $env:COMPUTERNAME
+                . "$($Env:ProgramFiles)\docker\docker.exe" -H $swarmConnString $tls node promote $env:COMPUTERNAME
             }
         }
         elseif ($this.SwarmMode -eq [Swarm]::Active) {
-            #$managers = docker -H  $SwarmDockerHost info -f '{{ json .Swarm.Managers }}'
+            
             if ($SwarmManagerIsMe) {
                 Write-Verbose "Creating a new Swarm"
                 . "$($Env:ProgramFiles)\docker\docker.exe" swarm init --advertise-addr $this.SwarmMasterURI
             }
             elseif (($this.SwarmManagement -eq [SwarmManagement]::Automatic) -and ($managers -lt $this.ManagerCount)) {
                 Write-Verbose "Joining the Swarm as a manager"
-                $this.JoinSwarm($SwarmDockerHost, "manager")
+                $this.JoinSwarm($swarmConnString, $tls, "manager")
             }
             else {
                 Write-Verbose "Joining the Swarm as a worker"
-                $this.JoinSwarm($SwarmDockerHost, "worker")
+                $this.JoinSwarm($swarmConnString, $tls,"worker")
             }
         }        
 		
@@ -585,7 +615,7 @@ class cDockerSwarm
         return $info
     }
 
-    [void]JoinSwarm($host,$type)
+    [void]JoinSwarm($host, $tls,$type)
     {
         $token = $null
         $i = 0
@@ -594,12 +624,12 @@ class cDockerSwarm
                 $i++
                 $ErrorActionPreference = 'stop'
                 Write-Verbose "Trying to get token from swarm manager"
-                $token = . "$($Env:ProgramFiles)\docker\docker.exe" -H $host swarm join-token $type -q 
+                $token = . "$($Env:ProgramFiles)\docker\docker.exe" -H $host $tls swarm join-token $type -q 
                 break
             }
             catch {
                 Write-Verbose "Waiting for manager to come online"
-                start-sleep 5
+                start-sleep 15
             }
         
         }
@@ -641,38 +671,37 @@ class cDockerTLSAutoEnrollment
             if (!(Test-Path $env:USERPROFILE\.docker)) {
                 Write-Verbose "Create Folder $("$env:USERPROFILE\.docker")"
                 mkdir $env:USERPROFILE\.docker
+            }
+            if (!(Test-Path $env:ALLUSERSPROFILE\docker\certs.d)) {
+                Write-Verbose "Create Folder $("$env:ALLUSERSPROFILE\docker\certs.d")"
+                mkdir $env:ALLUSERSPROFILE\docker\certs.d
             } 
 
-             ##Testing: Build Container.
-             #Future pull from hub
-            Write-Verbose "Building Enrollment Container"
-            Invoke-WebRequest https://github.com/pscripted/cDSCDockerSwarmTLSEnrollment/archive/master.zip -outfile $env:temp\enrollment.zip           
-            Expand-Archive $env:Temp\enrollment.zip -DestinationPath $env:Temp\ -force
-            . "$($Env:ProgramFiles)\docker\docker" build -t cdscdockerswarm-tls:latest $env:Temp\cDSCDockerSwarmTLSEnrollment-master\
-            Remove-Item $env:temp\enrollment.zip  -force
-            Remove-Item $env:temp\cDSCDockerSwarmTLSEnrollment-master\ -recurse -force
+            #Pull enrollment container 
+            Write-Verbose "Getting Enrollment Container"
+            . "$($Env:ProgramFiles)\docker\docker" pull pscripted/dsc-dockerswarm-tls:latest
+
             #Run TLS Enrollment Container
-            #docker build -t cdscdockerswarm-tls:latest .
             #This will create local certs for the CA and running host, and allow other nodes to get their own signed certs from the CA            
             Write-Verbose "Running Enrollment Container"
             #Double convert to JSON for IPs to escape json to prevent docker clobbering
-            . "$($Env:ProgramFiles)\docker\docker" run --restart:unless-stopped -dit `
+            . "$($Env:ProgramFiles)\docker\docker" run --restart unless-stopped -dit `
             -p 3000:3000 `
             -e DockerHost=$env:computername `
             -e DockerHostIPs=$((get-netipaddress -AddressFamily IPv4 -AddressState Preferred).IPaddress | convertto-json -Compress | convertto-json) `
             -v "$env:SystemDrive\DockerTLSCA:C:\DockerTLSCA" `
             -v "$env:ALLUSERSPROFILE\docker:$env:ALLUSERSPROFILE\docker" `
-            -v "$env:USERPROFILE\.docker:c:\users\containeradministrator\.docker" cdscdockerswarm-tls:latest            
+            -v "$env:USERPROFILE\.docker:c:\users\containeradministrator\.docker" pscripted/dsc-dockerswarm-tls:latest         
+            
             $i = 0  
             while (!(Test-Path $env:ALLUSERSPROFILE\docker\certs.d\cert.pem) -and $i -lt 5) { 
                 start-sleep 10
-            }
-            
+            }            
         }
         elseif ($this.Ensure -eq [ensure]::Present) {
             #Attempt enrollment from master            
             $i = 0  
-            while (!(Test-Path $env:ALLUSERSPROFILE\docker\certs.d\cert.pem) -and $i -lt 5) { 
+            while (!(Test-Path $env:ALLUSERSPROFILE\docker\certs.d\cert.pem) -and $i -lt 10) { 
                 try{
                     $i++
                     $ErrorActionPreference = 'stop'
@@ -682,7 +711,7 @@ class cDockerTLSAutoEnrollment
                 }
                 catch {
                     Write-Verbose "Waiting for TLS container to come online"
-                    start-sleep 30
+                    start-sleep 60
                 }
             }
             if (Test-Path $env:ALLUSERSPROFILE\docker\certs.d\cert.pem) {

@@ -1,10 +1,3 @@
-$swarmConfig = @{    
-    AllNodes = @()
-    NonNodeData =  @{
-        masterip = (Get-VMNetworkAdapter node1).IPAddresses | where {$_ -notmatch "::"}
-    }   
-}
-
 configuration TestDockerSwarm
 {
 
@@ -12,6 +5,11 @@ configuration TestDockerSwarm
     Import-DscResource -ModuleName cDSCDockerSwarm
     node ("localhost")
     {
+     WindowsFeature RSatAD
+        {
+            Ensure = "Present"
+            Name   = "RSAT-AD-Powershell"
+        }
 
          WindowsFeature ContainerInstall
         {
@@ -26,29 +24,20 @@ configuration TestDockerSwarm
             version = '17.06.0-ce'
             DownloadChannel = 'Stable'
         }
-		
-       cDockerTLSAutoEnrollment Enrollment 
+        
+        cDockerConfig Config
        {
             Ensure = 'Present'
-            EnrollmentServer = $ConfigurationData.NonNodeData.masterip
             DependsOn = '[cDockerBinaries]Docker'
-       }
-
-
-       cDockerConfig Config
-       {
-            Ensure = 'Present'
-            DependsOn = '[cDockerTLSAutoEnrollment]Enrollment'
-            RestartOnChange = $false
+            RestartOnChange = $true
             ExposeAPI = $true
-            InsecureRegistries = 'imageregistry.contoso.com:5000'
-            Labels = "com.contoso.environment=test", "com.contoso.winver=core"
-            EnableTLS = $true
-        } 
+            InsecureRegistries = 'myregistry:5000'
+            Labels = "my.environment=test", "my.winver=core"
+        }
 
        cDockerSwarm Swarm {
             DependsOn = '[cDockerBinaries]Config'
-            SwarmMasterURI = "$($masterip):2377"
+            SwarmMasterURI = '10.10.255.255:2377'
             SwarmMode = 'Active'
             ManagerCount = 3
             SwarmManagement = 'Automatic'
