@@ -112,10 +112,11 @@ class cDockerBinaries
     
     # Tests if the resource is in the desired state.
     [bool] Test()
-    {
+    {        
         if ($this.DownloadChannel -eq "EE") {
+            $dockerPackage = Get-Package -ProviderName DockerMsftProvider 
             if ((Get-PackageProvider).Name -contains "DockerMsftProvider") {
-                $dockerPackage = Find-Package -ProviderName DockerMsftProvider
+                $dockerPackage = Get-Package -ProviderName DockerMsftProvider
                 if ($dockerPackage)   {
                     if ($dockerPackage.Version -eq $this.version) {
                         return $true
@@ -308,6 +309,10 @@ class cDockerConfig
     [DscProperty()]
     [boolean] $RestartOnChange
 
+    #Enable TLS
+    [DscProperty()]
+    [bool]$EnableTLS=$false
+
     # Sets the desired state of the resource.
     [void] Set()
     {    
@@ -410,7 +415,16 @@ class cDockerConfig
         }
         if($this.exposeApi -eq $true){
 			$pendingConfiguration | Add-Member -Name "hosts" -MemberType NoteProperty -Value @($this.daemonBinding, "npipe://")
-    	}
+        }
+        $CertExists = Test-Path $env:ALLUSERSPROFILE\docker\certs.d\cert.pem
+        $KeyExists = Test-Path $env:ALLUSERSPROFILE\docker\certs.d\key.pem
+        if ($this.EnableTLS -and $CertExists -and $KeyExists) {
+            #Add TLS                 
+            $pendingConfiguration | Add-Member -MemberType NoteProperty -Name  "tlscacert" -Value "C:\ProgramData\docker\certs.d\ca.pem"
+            $pendingConfiguration | Add-Member -MemberType NoteProperty -Name  "tlscert" -Value "C:\ProgramData\docker\certs.d\cert.pem"
+            $pendingConfiguration | Add-Member -MemberType NoteProperty -Name  "tlskey" -Value "C:\ProgramData\docker\certs.d\key.pem"
+            $pendingConfiguration | Add-Member -MemberType NoteProperty -Name  "tlsverify" -Value $true
+        }
 
         return $pendingConfiguration | ConvertTo-Json
      }
@@ -440,8 +454,6 @@ class cDockerSwarm
     [DscProperty(Mandatory)]
     [SwarmManagement]$SwarmManagement
 
-
-    
     # Sets the desired state of the resource.
     [void] Set()
     {    
@@ -455,7 +467,6 @@ class cDockerSwarm
         Write-Verbose "Getting Swarm info from $SwarmDockerHost"
         $SwarmInfo = . "$($Env:ProgramFiles)\docker\docker.exe" -H $SwarmDockerHost info -f '{{ json .Swarm }}' | ConvertFrom-Json
         $managers = $SwarmInfo.managers
-
         
         if ($LocalInfo.Swarm.LocalNodeState -eq "active") {
             $InRightSwarm = $LocalInfo.Swarm.RemoteManagers.Addr -contains $this.SwarmMasterURI
@@ -485,7 +496,7 @@ class cDockerSwarm
                 Write-Verbose "Joining the Swarm as a worker"
                 $this.JoinSwarm($SwarmDockerHost, "worker")
             }
-		}
+        }        
 		
     }        
     
@@ -554,7 +565,7 @@ class cDockerSwarm
         return $this 
     }
     
-    [string]GetLocalDockerInfo(){
+    [psobject]GetLocalDockerInfo(){
         #Try in a loop, in case docker was just restarted and is not ready yet
         $info = $null
         $i = 0
@@ -599,4 +610,216 @@ class cDockerSwarm
             write-verbose "Failed to Get token; can't join swarm"
         }
     }    
+}
+
+
+# [DscResource()] indicates the class is a DSC resource.
+[DscResource()]
+class cDockerTLSAutoEnrollment
+{
+
+    # A DSC resource must define at least one key property.
+    [DscProperty(Key)]
+    [Ensure]$Ensure
+
+    [DscProperty()]
+    [String]$EnrollmentServer
+
+    
+    # Sets the desired state of the resource.
+    [void] Set()
+    {
+        Write-Verbose "Using Enrollment Server: $($this.EnrollmentServer)"        
+        $SwarmManagerIsMe = (Get-NetIPAddress).IPAddress -contains $this.EnrollmentServer
+        Write-Verbose "Swarm Manager is this node: $SwarmManagerIsMe"
+         if ($SwarmManagerIsMe -and $this.Ensure -eq [Ensure]::Present) {
+            #Prepare for Enrollment
+            if (!(Test-Path $env:SystemDrive\DockerTLSCA)) {
+                Write-Verbose "Create Folder $("$env:SystemDrive\DockerTLSCA")"
+                mkdir $env:SystemDrive\DockerTLSCA             
+            }
+            if (!(Test-Path $env:USERPROFILE\.docker)) {
+                Write-Verbose "Create Folder $("$env:USERPROFILE\.docker")"
+                mkdir $env:USERPROFILE\.docker
+            } 
+
+             ##Testing: Build Container.
+             #Future pull from hub
+            Write-Verbose "Building Enrollment Container"
+            Invoke-WebRequest https://github.com/pscripted/cDSCDockerSwarmTLSEnrollment/archive/master.zip -outfile $env:temp\enrollment.zip           
+            Expand-Archive $env:Temp\enrollment.zip -DestinationPath $env:Temp\ -force
+            . "$($Env:ProgramFiles)\docker\docker" build -t cdscdockerswarm-tls:latest $env:Temp\cDSCDockerSwarmTLSEnrollment-master\
+            Remove-Item $env:temp\enrollment.zip  -force
+            Remove-Item $env:temp\cDSCDockerSwarmTLSEnrollment-master\ -recurse -force
+            #Run TLS Enrollment Container
+            #docker build -t cdscdockerswarm-tls:latest .
+            #This will create local certs for the CA and running host, and allow other nodes to get their own signed certs from the CA            
+            Write-Verbose "Running Enrollment Container"
+            #Double convert to JSON for IPs to escape json to prevent docker clobbering
+            . "$($Env:ProgramFiles)\docker\docker" run --restart:unless-stopped -dit `
+            -p 3000:3000 `
+            -e DockerHost=$env:computername `
+            -e DockerHostIPs=$((get-netipaddress -AddressFamily IPv4 -AddressState Preferred).IPaddress | convertto-json -Compress | convertto-json) `
+            -v "$env:SystemDrive\DockerTLSCA:C:\DockerTLSCA" `
+            -v "$env:ALLUSERSPROFILE\docker:$env:ALLUSERSPROFILE\docker" `
+            -v "$env:USERPROFILE\.docker:c:\users\containeradministrator\.docker" cdscdockerswarm-tls:latest            
+            $i = 0  
+            while (!(Test-Path $env:ALLUSERSPROFILE\docker\certs.d\cert.pem) -and $i -lt 5) { 
+                start-sleep 10
+            }
+            
+        }
+        elseif ($this.Ensure -eq [ensure]::Present) {
+            #Attempt enrollment from master            
+            $i = 0  
+            while (!(Test-Path $env:ALLUSERSPROFILE\docker\certs.d\cert.pem) -and $i -lt 5) { 
+                try{
+                    $i++
+                    $ErrorActionPreference = 'stop'
+                    Write-Verbose "Trying to enroll in TLS"
+                    Install-cDSCSwarmTLSCert -SwarmMasterIP $this.EnrollmentServer -port 3000 -serverCerts
+                    break
+                }
+                catch {
+                    Write-Verbose "Waiting for TLS container to come online"
+                    start-sleep 30
+                }
+            }
+            if (Test-Path $env:ALLUSERSPROFILE\docker\certs.d\cert.pem) {
+                write-verbose "Certificates Installed"
+            }
+            else {
+                write-verbose "Failed to Get Certificates"
+            }
+        }
+        elseif ($this.Ensure -eq [ensure]::Absent) {
+            $containerID = . "$($Env:ProgramFiles)\docker\docker" ps -f "ancestor=cdscdockerswarm-tls:latest" -q        
+            if ($containerID) {
+                . "$($Env:ProgramFiles)\docker\docker" stop $containerID     
+                . "$($Env:ProgramFiles)\docker\docker" rm $containerID
+            }
+        }
+    }        
+    
+    # Tests if the resource is in the desired state.
+    [bool] Test()
+    {   
+        Write-Verbose "Using Enrollment Server: $($this.EnrollmentServer)"        
+        $SwarmManagerIsMe = (Get-NetIPAddress).IPAddress -contains $this.EnrollmentServer
+        if ($SwarmManagerIsMe -and $this.Ensure -eq [Ensure]::Present) {
+            if (. "$($Env:ProgramFiles)\docker\docker" ps -f "ancestor=cdscdockerswarm-tls:latest" -q) {
+                Write-Verbose "Enrollment container already running"
+                $running = $true
+            }
+            else {
+                Write-Verbose "No Enrollment Container running"
+                $running = $false
+            }
+                
+            if ($this.Ensure -eq [Ensure]::Present) {
+                return $running
+            }
+            else {
+                return !$running
+            }
+        }
+        else {
+            Write-Verbose "Checking for Host Certificates"
+            $CertExists = Test-Path $env:ALLUSERSPROFILE\docker\certs.d\cert.pem
+            $KeyExists = Test-Path $env:ALLUSERSPROFILE\docker\certs.d\key.pem
+            if ($CertExists -and $KeyExists) {
+                return $true            
+            }
+            else{
+                return $false
+            }
+        }
+    }    
+    # Gets the resource's current state.
+    [cDockerTLSAutoEnrollment] Get()
+    {   
+        Write-Verbose "Using Enrollment Server: $($this.EnrollmentServer)"        
+        $SwarmManagerIsMe = (Get-NetIPAddress).IPAddress -contains $this.EnrollmentServer
+        if ($SwarmManagerIsMe -and $this.TLSOpenEnrollment) {     
+            if (. "$($Env:ProgramFiles)\docker\docker" ps -f "ancestor=cdscdockerswarm-tls:latest" -q) {
+                return $this.Ensure = [Ensure]::Present
+            }
+            else {
+                return $this.Ensure = [Ensure]::Absent
+            }
+        }
+        else {
+            $CertExists = Test-Path $env:ALLUSERSPROFILE\docker\certs.d\cert.pem
+            $KeyExists = Test-Path $env:ALLUSERSPROFILE\docker\certs.d\key.pem
+            if ($CertExists -and $KeyExists) {
+                 return $this.Ensure = [Ensure]::Present            
+            }
+            else{
+                return $this.Ensure = [Ensure]::Absent
+            }
+        }
+    }    
+}
+
+##Functions
+
+##############################
+#.SYNOPSIS
+#Install Docker daemon certs provided by cDSCDockerSwarm enrollment container
+#
+#.DESCRIPTION
+#Access the TLS AutoEnrollment Container for server and client certs for docker and download to appropriate directories
+#
+#.PARAMETER SwarmMasterIP
+#IP of the host with the container running.
+#
+#.PARAMETER port
+#Port the container is bound to. Default is 3000
+#
+#.EXAMPLE
+#Install-cDSCSwarmTLSCert -SwarmMasterIP 192.168.0.20
+
+##############################
+function Install-cDSCSwarmTLSCert {
+    [CmdletBinding()]
+    param (
+        [string]$SwarmMasterIP,
+        [int]$port=3000,
+        [switch]$serverCerts        
+    )
+    
+    begin {
+        if (!(Test-Path $env:ALLUSERSPROFILE\docker\certs.d)) {
+        mkdir $env:ALLUSERSPROFILE\docker\certs.d
+        }
+        if (!(Test-Path $env:USERPROFILE\.docker)) {
+            mkdir $env:USERPROFILE\.docker
+        }
+    }
+    
+    process {
+        [array]$ips = (get-netipaddress -AddressState Preferred -AddressFamily IPv4).IPAddress
+        try {
+            $Certs = Invoke-RestMethod "http://$($SwarmMasterIP):$port/swarmnode" -Method Post -Body (@{servername=$env:computername;ips=$ips} | Convertto-JSON) -ContentType "application/JSON" 
+        }
+        catch {
+            Write-Error "Unable to connect to TLS Enrollment Server. AutoEnroll must be enabled in the DSC Configuration"
+        }
+        try {
+                $certs.clientCert | out-file -FilePath  $env:USERPROFILE\.docker\cert.pem -Force -Encoding ascii
+                $certs.clientKey  | out-file -FilePath  $env:USERPROFILE\.docker\key.pem -Force -Encoding ascii
+                $certs.CACert | out-file -FilePath  $env:USERPROFILE\.docker\ca.pem -Force -Encoding ascii
+            if ($PSBoundParameters.ContainsKey('serverCerts')) {
+                $certs.ServerCert | out-file -FilePath  $env:ALLUSERSPROFILE\docker\certs.d\cert.pem -Force -Encoding ascii
+                $certs.ServerKey | out-file -FilePath  $env:ALLUSERSPROFILE\docker\certs.d\key.pem -Force -Encoding ascii
+                $certs.CACert | out-file -FilePath  $env:ALLUSERSPROFILE\docker\certs.d\ca.pem -Force -Encoding ascii
+            }
+        }
+        catch {
+            Write-Error "Unable to save all certificates"    
+        }
+    }
+    
+    end {
+    }
 }
