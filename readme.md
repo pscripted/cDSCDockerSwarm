@@ -1,6 +1,6 @@
 ## cDSCDockerSwarm
 
-Management of Docker installation, version, swarm, configuration, and certificates on Windows Server 2016
+Management of Docker installation, version, swarm, configuration, and certificates on Windows Server 2016    
 Please see [my Blog on this module](http://www.pscripted.com/docker-dsc/)
 
 Available from the PowerShell Gallery, install with:
@@ -55,7 +55,31 @@ C:\> docker version
 Server:  
  Version:      17.06.0-ce
 ```
+### cDockerTLSAutoEnrollment
 
+This resource works best after the binary resorce, before any other resources are used. if Esnure is set to Present, when the designated enrollment server runs its configuration it will download a container to create all the certificates for the swarm. More details on the container can be found at [Docker Hub](https://hub.docker.com/r/pscripted/dsc-dockerswarm-tls/)
+
+This container will create:    
+ A CA in C:\DockerTLSCA with a passphrase protected private key ("cdscdockerswarm")
+ A host certificate for Docker with private key
+ A client Certificate for the running user
+
+The other nodes will access the container as a web service to receive their signed certificates.
+
+Additional clients (workstations, other users on the servers, etc) can use the Install-cDSCSwarmTLSCert cmdlet that is included in the module to request client keys and install them in the current users cert directory.
+
+Once all certificates generated have been set you can disable set this resource to Absent to prevent new key generation.
+
+While this resource will create all the necessary certificates, telling the configuration to set up TLS must be set as well in the cDockerConfig resource.
+
+```
+cDockerTLSAutoEnrollment Enrollment 
+    {
+        Ensure = 'Present'
+        EnrollmentServer = "102.168.10.20"
+        DependsOn = '[cDockerBinaries]Docker'
+    }
+```
 ### cDockerConfig
 
 Builds and manages the Docker configuration in C:\ProgramData\docker\config\daemon.json
@@ -71,6 +95,7 @@ cDockerConfig DaemonJson
     ExposeAPI = $true
     InsecureRegistries = myregistry.contoso.com:5000
     Labels = "contoso.environment=dev","contoso.usage=internal"
+    EnableTLS = $true
 }
 ```
 
@@ -88,7 +113,11 @@ Will Produce:
     "hosts":  [
                   "tcp://0.0.0.0:2375",
                   "npipe://"
-              ]
+              ],
+    "tlscacert": "C:\\ProgramData\\docker\\certs.d\\ca.pem",
+    "tlscert": "C:\\ProgramData\\docker\\certs.d\\cert.pem",
+    "tlskey": "C:\\ProgramData\\docker\\certs.d\\key.pem",
+    "tlsverify": true
 }
 ```
 If RestartOnChange is set, it will restart the daemon after any change to the 
@@ -96,7 +125,7 @@ ExposeAPI will allow named pipe connections, as well as a default binding on all
 
 ### cDockerSwarm
 
-Manages the state of the swarm, and number of managers if desired. The worker tokens are pulled from the desired manager at the tine of joining. This may need to be adjusted when tls support is added
+Manages the state of the swarm, and number of managers if desired. The worker tokens are pulled from the desired manager at the tine of joining.
 
 SwarmManagerURI should be the desired first manager. The same DSC Configuration can be used on the manager node at the same time as other nodes, the configuration will initialize the swarm, and the worker nodes will attempt a few retries to connect to the manager while it initializes.
 
