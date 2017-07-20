@@ -125,7 +125,7 @@ ExposeAPI will allow named pipe connections, as well as a default binding on all
 
 ### cDockerSwarm
 
-Manages the state of the swarm, and number of managers if desired. The worker tokens are pulled from the desired manager at the tine of joining. This may need to be adjusted when tls support is added
+Manages the state of the swarm, and number of managers if desired. The worker tokens are pulled from the desired manager at the tine of joining.
 
 SwarmManagerURI should be the desired first manager. The same DSC Configuration can be used on the manager node at the same time as other nodes, the configuration will initialize the swarm, and the worker nodes will attempt a few retries to connect to the manager while it initializes.
 
