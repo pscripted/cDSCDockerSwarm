@@ -67,22 +67,21 @@ class cDockerBinaries
             #Use DockerMsftProvider
             Write-Verbose "Using DockerMsftProvider"
 
-            if (!((Get-PackageProvider -ListAvailable).Name -contains "DockerMsftProvider")) {
-                Write-Verbose "Install DockerMsftProvider Provider"
-                Install-Module -Name DockerMsftProvider -Repository psgallery -Force
-            }    
-             
-            $package = Find-Package -ProviderName DockerMsftProvider -RequiredVersion $GetVersion
-
-            if ($package) {
-                Write-Verbose "Required version package was found in provider. Installing"
-                Install-Package $package -Update
-                Start-Service Docker
+            if ((Get-PackageProvider -ListAvailable).Name -notcontains "NuGet") {
+                Write-Verbose "Installing NuGet"
+                Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
             }
-            else {
-                Write-Verbose "Package was not found in provider"
+            if (!(get-module DockerMsftProvider -listavailable)) {
+                Write-Verbose "Installing DockerMsftProvider "
+                Install-Module -Name DockerMsftProvider -Repository PSGallery -Force
+            }     
+            #Attempt installation         
+            try {
+                Install-Package -Name docker -RequiredVersion $this.version -ProviderName DockerMsftProvider -Force -verbose            
             }
-
+            catch {
+                Write-Verbose "Could not install Docker $($this.version); $($_.Exception)"                    
+            }
         }
         else {
             Write-Verbose "Using $($this.DownloadChannel) channel URL $dlURL"
@@ -105,36 +104,30 @@ class cDockerBinaries
                 [Environment]::SetEnvironmentVariable('PATH', $env:Path, 'Machine')
                 . "$($Env:ProgramFiles)\docker\dockerd.exe" --register-service 
             }
-            Write-Verbose "Starting Docker Service"
-            Start-Service docker  
         }
+        Write-Verbose "Starting Docker Service"
+        Start-Service docker  
     }        
     
     # Tests if the resource is in the desired state.
     [bool] Test()
     {        
         if ($this.DownloadChannel -eq "EE") {
-            $dockerPackage = Get-Package -ProviderName DockerMsftProvider 
-            if ((Get-PackageProvider).Name -contains "DockerMsftProvider") {
-                $dockerPackage = Get-Package -ProviderName DockerMsftProvider
-                if ($dockerPackage)   {
-                    if ($dockerPackage.Version -eq $this.version) {
-                        return $true
-                    }
-                    else {
-                        Write-Verbose "Incorrect docker version installed"
-                        return $false
-                    }
+            try {
+                $dockerPackage = Get-Package docker -ProviderName DockerMsftProvider -errorAction Stop
+                if ($dockerPackage.version -match $this.version) {
+                    Write-Verbose "Correct Version Installed"
+                    return $true
                 }
-                else {
-                    Write-Verbose "Docker is not installed"
+                else {                
+                    Write-Verbose "Wrong Version of Docker is installed: $($dockerPackage.version) should be $($this.version)"
                     return $false
                 }
             }
-            else {
-                Write-Verbose "DockerMsftProvider Package Provider is missing"
+            catch {
+                Write-Verbose "Failed to find docker package"
                 return $false
-            }
+            }            
         }
         else {
             $service = (Get-Service).Name -contains "Docker"
@@ -145,7 +138,6 @@ class cDockerBinaries
             else {
                 $CurrentVersion = $null    
             }
-
 
             if ($service -and ($CurrentVersion -eq $this.version)) {               
                 Write-Verbose "desired version $($this.version) is installed"
@@ -495,6 +487,8 @@ class cDockerSwarm
         else {
             write-error "no connection to remote swarm manager"
         }
+        #Random seed to sleep to get better distribution, and prevent too many managers.
+        Start-Sleep (get-random -Minimum 0 -Maximum 15)
         $SwarmInfo = . "$($Env:ProgramFiles)\docker\docker.exe" -H $swarmConnString $tls info -f '{{ json .Swarm }}' | ConvertFrom-Json
         $managers = $SwarmInfo.managers
         
@@ -533,8 +527,6 @@ class cDockerSwarm
     # Tests if the resource is in the desired state.
     [bool] Test()
     {        
-
-            
             $LocalInfo = $this.GetLocalDockerInfo()
             
 			if ($LocalInfo.Swarm.LocalNodeState  -eq "active" -and ($this.SwarmMode -eq [Swarm]::Active)) {
@@ -736,7 +728,7 @@ class cDockerTLSAutoEnrollment
         Write-Verbose "Using Enrollment Server: $($this.EnrollmentServer)"        
         $SwarmManagerIsMe = (Get-NetIPAddress).IPAddress -contains $this.EnrollmentServer
         if ($SwarmManagerIsMe -and $this.Ensure -eq [Ensure]::Present) {
-            if (. "$($Env:ProgramFiles)\docker\docker" ps -f "ancestor=cdscdockerswarm-tls:latest" -q) {
+            if (. "$($Env:ProgramFiles)\docker\docker" ps -f "ancestor=pscripted/dsc-dockerswarm-tls:latest" -q) {
                 Write-Verbose "Enrollment container already running"
                 $running = $true
             }

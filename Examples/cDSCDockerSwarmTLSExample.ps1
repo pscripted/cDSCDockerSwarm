@@ -1,7 +1,11 @@
 $swarmConfig = @{    
-    AllNodes = @()
+    AllNodes = @(
+        @{
+            NodeName = "localhost"          
+        }
+    );
     NonNodeData =  @{
-        masterip = (Get-VMNetworkAdapter node1).IPAddresses | where {$_ -notmatch "::"}
+        masterip = (Get-VMNetworkAdapter node1).IPAddresses | Where-Object {$_ -notmatch "::"} #Replace with the IP of the node you want the initial master
     }   
 }
 
@@ -9,13 +13,15 @@ configuration TestDockerSwarm
 {
 
     Import-DscResource -ModuleName 'PSDesiredStateConfiguration'
-    Import-DscResource -ModuleName cDSCDockerSwarm
-    node ("localhost")
+    Import-DSCResource -ModuleName xDSCFirewall
+    Import-DscResource -ModuleName cDSCDockerSwarm -ModuleVersion 0.9
+    node $AllNodes.NodeName
     {
-     WindowsFeature RSatAD
+        
+        xDSCFirewall DisablePrivate
         {
-            Ensure = "Present"
-            Name   = "RSAT-AD-Powershell"
+          Ensure = "Absent"
+          Zone = "Private"
         }
 
          WindowsFeature ContainerInstall
@@ -30,9 +36,9 @@ configuration TestDockerSwarm
             DependsOn = '[WindowsFeature]ContainerInstall'
             version = '17.06.0-ce'
             DownloadChannel = 'Stable'
-        }
-        
-        cDockerTLSAutoEnrollment Enrollment 
+        }		
+
+       cDockerTLSAutoEnrollment Enrollment 
        {
             Ensure = 'Present'
             EnrollmentServer = $ConfigurationData.NonNodeData.masterip
@@ -49,9 +55,9 @@ configuration TestDockerSwarm
             Labels = "com.contoso.environment=test", "com.contoso.winver=core"
             EnableTLS = $true
         } 
-        
+
        cDockerSwarm Swarm {
-            DependsOn = '[cDockerBinaries]Config'
+            DependsOn = '[cDockerConfig]Config'
             SwarmMasterURI = "$($ConfigurationData.NonNodeData.masterip):2377"
             SwarmMode = 'Active'
             ManagerCount = 3
@@ -85,3 +91,5 @@ BzKqMFhy29cU/Rjrvrk4BBEeg0dFSF0zlC1fXWeWRA==
        }
     }
 }
+
+TestDockerSwarm -OutputPath .\ -configurationData $swarmConfig

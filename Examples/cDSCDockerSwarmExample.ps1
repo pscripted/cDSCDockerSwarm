@@ -1,7 +1,11 @@
 $swarmConfig = @{    
-    AllNodes = @()
+    AllNodes = @(
+        @{
+            NodeName = "localhost"          
+        }
+    );
     NonNodeData =  @{
-        masterip = (Get-VMNetworkAdapter node1).IPAddresses | where {$_ -notmatch "::"}
+        masterip = (Get-VMNetworkAdapter node1).IPAddresses | Where-Object {$_ -notmatch "::"} #Replace with the IP of the node you want the initial master
     }   
 }
 
@@ -9,9 +13,15 @@ configuration TestDockerSwarm
 {
 
     Import-DscResource -ModuleName 'PSDesiredStateConfiguration'
-    Import-DscResource -ModuleName cDSCDockerSwarm
-    node ("localhost")
+    Import-DSCResource -ModuleName xDSCFirewall
+    Import-DscResource -ModuleName cDSCDockerSwarm -ModuleVersion 0.9
+    node $AllNodes.NodeName
     {
+        xDSCFirewall DisablePrivate
+        {
+          Ensure = "Absent"
+          Zone = "Private"
+        }
 
          WindowsFeature ContainerInstall
         {
@@ -38,8 +48,8 @@ configuration TestDockerSwarm
         }
 
        cDockerSwarm Swarm {
-            DependsOn = '[cDockerBinaries]Config'
-            SwarmMasterURI = "$($masterip):2377"
+            DependsOn = '[cDockerConfig]Config'
+            SwarmMasterURI = "$($ConfigurationData.NonNodeData.masterip):2377"
             SwarmMode = 'Active'
             ManagerCount = 3
             SwarmManagement = 'Automatic'
@@ -72,3 +82,5 @@ BzKqMFhy29cU/Rjrvrk4BBEeg0dFSF0zlC1fXWeWRA==
        }
     }
 }
+
+TestDockerSwarm -OutputPath .\ -configurationData $swarmConfig
