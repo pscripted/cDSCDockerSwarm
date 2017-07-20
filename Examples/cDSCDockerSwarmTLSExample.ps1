@@ -17,6 +17,7 @@ configuration TestDockerSwarm
     Import-DscResource -ModuleName cDSCDockerSwarm -ModuleVersion 0.9
     node $AllNodes.NodeName
     {
+        
         xDSCFirewall DisablePrivate
         {
           Ensure = "Absent"
@@ -37,15 +38,23 @@ configuration TestDockerSwarm
             DownloadChannel = 'Stable'
         }		
 
-        cDockerConfig Config
+       cDockerTLSAutoEnrollment Enrollment 
        {
             Ensure = 'Present'
+            EnrollmentServer = $ConfigurationData.NonNodeData.masterip
             DependsOn = '[cDockerBinaries]Docker'
-            RestartOnChange = $true
+       }
+
+       cDockerConfig Config
+       {
+            Ensure = 'Present'
+            DependsOn = '[cDockerTLSAutoEnrollment]Enrollment'
+            RestartOnChange = $false
             ExposeAPI = $true
-            InsecureRegistries = 'myregistry:5000'
-            Labels = "my.environment=test", "my.winver=core"
-        }
+            InsecureRegistries = 'imageregistry.contoso.com:5000'
+            Labels = "com.contoso.environment=test", "com.contoso.winver=core"
+            EnableTLS = $true
+        } 
 
        cDockerSwarm Swarm {
             DependsOn = '[cDockerConfig]Config'
