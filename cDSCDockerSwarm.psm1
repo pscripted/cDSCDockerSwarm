@@ -761,24 +761,28 @@ class cDockerTLSAutoEnrollment
     {   
         Write-Verbose "Using Enrollment Server: $($this.EnrollmentServer)"        
         $SwarmManagerIsMe = (Get-NetIPAddress).IPAddress -contains $this.EnrollmentServer
-        if ($SwarmManagerIsMe -and $this.TLSOpenEnrollment) {     
+        if ($SwarmManagerIsMe -and $this.Ensure -eq [Ensure]::Present) {     
+            Write-verbose "This node should be the CA"
             if (. "$($Env:ProgramFiles)\docker\docker" ps -f "ancestor=pscripted/dsc-dockerswarm-tls:latest" -q) {
-                return $this.Ensure = [Ensure]::Present
+                Write-verbose "CA Container is running"
+                $this.Ensure = [Ensure]::Present
             }
             else {
-                return $this.Ensure = [Ensure]::Absent
+                Write-verbose "CA Container is not running"
+                $this.Ensure = [Ensure]::Absent                
             }
         }
         else {
             $CertExists = Test-Path $env:ALLUSERSPROFILE\docker\certs.d\cert.pem
             $KeyExists = Test-Path $env:ALLUSERSPROFILE\docker\certs.d\key.pem
             if ($CertExists -and $KeyExists) {
-                 return $this.Ensure = [Ensure]::Present            
+                $this.Ensure = [Ensure]::Present            
             }
             else{
-                return $this.Ensure = [Ensure]::Absent
+                $this.Ensure = [Ensure]::Absent
             }
         }
+        return $this
     }    
 }
 
