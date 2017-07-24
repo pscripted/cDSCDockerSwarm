@@ -81,9 +81,12 @@ cDockerTLSAutoEnrollment Enrollment
     }
 ```
 
-After a node has been secured with TLS, you will need to import a client certificate for yourself. Use the Install-cDSCSwarmTLSCert <masterIP> cmdlet to import yourself a certificate.
+After a node has been secured with TLS, you will need to import a client certificate for yourself. Use the 'Install-cDSCSwarmTLSCert <masterIP>' cmdlet to import yourself a certificate.
 
-The connection can then be tested with docker -H <masterIP> info
+Due to limitations in exposed ports in a windows Docker host, you cannot connect to the enrollment server by IP locally. Use  'Install-cDSCSwarmTLSCert localhost' to get a certificate on the master node. 
+
+The connection can then be tested with docker -H <masterIP>:2376 --tlsverify info
+
 ### cDockerConfig
 
 Builds and manages the Docker configuration in C:\ProgramData\docker\config\daemon.json
