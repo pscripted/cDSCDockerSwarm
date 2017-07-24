@@ -80,6 +80,10 @@ cDockerTLSAutoEnrollment Enrollment
         DependsOn = '[cDockerBinaries]Docker'
     }
 ```
+
+After a node has been secured with TLS, you will need to import a client certificate for yourself. Use the Install-cDSCSwarmTLSCert <masterIP> cmdlet to import yourself a certificate.
+
+The connection can then be tested with docker -H <masterIP> info
 ### cDockerConfig
 
 Builds and manages the Docker configuration in C:\ProgramData\docker\config\daemon.json
