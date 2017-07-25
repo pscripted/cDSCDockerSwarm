@@ -14,7 +14,7 @@ configuration TestDockerSwarm
 
     Import-DscResource -ModuleName 'PSDesiredStateConfiguration'
     Import-DSCResource -ModuleName xDSCFirewall
-    Import-DscResource -ModuleName cDSCDockerSwarm -ModuleVersion 0.9.1
+    Import-DscResource -ModuleName cDSCDockerSwarm -ModuleVersion 0.9.2
     node $AllNodes.NodeName
     {
         xDSCFirewall DisablePrivate
