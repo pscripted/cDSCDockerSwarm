@@ -1,7 +1,7 @@
 ## cDSCDockerSwarm
 
 Management of Docker installation, version, swarm, configuration, and certificates on Windows Server 2016    
-Please see [my Blog on this module](http://www.pscripted.com/docker-dsc/)
+Please see [my Blog on this module](http://www.pscripted.com/docker-dsc/), and [the TLS post](http://www.pscripted.com/6-min-dsc-docker-swarm/)
 
 Available from the PowerShell Gallery, install with:
 ```
@@ -17,7 +17,6 @@ Containers Windows Feature. The EE Docker provider will attempt to install the C
 ### cDockerBinaries
 
 Supports several binary sources, including the Microsoft Docker Provider  
-EE support is a work in progress, there have been some issues detecting that the correct provider is installed.
 
 If the running version is different than desired:  
 
