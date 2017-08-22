@@ -54,6 +54,12 @@ C:\> docker version
 Server:  
  Version:      17.06.0-ce
 ```
+
+For Available EE Versions please check  
+```
+Find-Package -Name docker -AllVersions -ProviderName DockerMsftProvider
+```
+
 ### cDockerTLSAutoEnrollment
 
 This resource works best after the binary resorce, before any other resources are used. if Esnure is set to Present, when the designated enrollment server runs its configuration it will download a container to create all the certificates for the swarm. More details on the container can be found at [Docker Hub](https://hub.docker.com/r/pscripted/dsc-dockerswarm-tls/)
