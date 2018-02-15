@@ -2,7 +2,7 @@ configuration TestDockerSwarm
 {
 
     Import-DscResource -ModuleName 'PSDesiredStateConfiguration'
-    Import-DscResource -ModuleName cDSCDockerSwarm
+    Import-DscResource -ModuleName cDSCDockerSwarm -ModuleVersion 0.9.2
     node ("localhost")
     {
      WindowsFeature RSatAD

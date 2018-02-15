@@ -1,7 +1,7 @@
 ## cDSCDockerSwarm
 
 Management of Docker installation, version, swarm, configuration, and certificates on Windows Server 2016    
-Please see [my Blog on this module](http://www.pscripted.com/docker-dsc/)
+Please see [my Blog on this module](http://www.pscripted.com/docker-dsc/), and [the TLS post](http://www.pscripted.com/6-min-dsc-docker-swarm/)
 
 Available from the PowerShell Gallery, install with:
 ```
@@ -17,7 +17,6 @@ Containers Windows Feature. The EE Docker provider will attempt to install the C
 ### cDockerBinaries
 
 Supports several binary sources, including the Microsoft Docker Provider  
-EE support is a work in progress, there have been some issues detecting that the correct provider is installed.
 
 If the running version is different than desired:  
 
@@ -55,6 +54,12 @@ C:\> docker version
 Server:  
  Version:      17.06.0-ce
 ```
+
+For Available EE Versions please check  
+```
+Find-Package -Name docker -AllVersions -ProviderName DockerMsftProvider
+```
+
 ### cDockerTLSAutoEnrollment
 
 This resource works best after the binary resorce, before any other resources are used. if Esnure is set to Present, when the designated enrollment server runs its configuration it will download a container to create all the certificates for the swarm. More details on the container can be found at [Docker Hub](https://hub.docker.com/r/pscripted/dsc-dockerswarm-tls/)
@@ -80,6 +85,13 @@ cDockerTLSAutoEnrollment Enrollment
         DependsOn = '[cDockerBinaries]Docker'
     }
 ```
+
+After a node has been secured with TLS, you will need to import a client certificate for yourself. Use the 'Install-cDSCSwarmTLSCert <masterIP>' cmdlet to import yourself a certificate.
+
+Due to limitations in exposed ports in a windows Docker host, you cannot connect to the enrollment server by IP locally. Use  'Install-cDSCSwarmTLSCert localhost' to get a certificate on the master node. 
+
+The connection can then be tested with docker -H <masterIP>:2376 --tlsverify info
+
 ### cDockerConfig
 
 Builds and manages the Docker configuration in C:\ProgramData\docker\config\daemon.json

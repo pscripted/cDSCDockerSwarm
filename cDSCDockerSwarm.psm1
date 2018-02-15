@@ -714,7 +714,7 @@ class cDockerTLSAutoEnrollment
             }
         }
         elseif ($this.Ensure -eq [ensure]::Absent) {
-            $containerID = . "$($Env:ProgramFiles)\docker\docker" ps -f "ancestor=cdscdockerswarm-tls:latest" -q        
+            $containerID = . "$($Env:ProgramFiles)\docker\docker" ps -f "ancestor=pscripted/dsc-dockerswarm-tls:latest" -q     
             if ($containerID) {
                 . "$($Env:ProgramFiles)\docker\docker" stop $containerID     
                 . "$($Env:ProgramFiles)\docker\docker" rm $containerID
@@ -761,24 +761,28 @@ class cDockerTLSAutoEnrollment
     {   
         Write-Verbose "Using Enrollment Server: $($this.EnrollmentServer)"        
         $SwarmManagerIsMe = (Get-NetIPAddress).IPAddress -contains $this.EnrollmentServer
-        if ($SwarmManagerIsMe -and $this.TLSOpenEnrollment) {     
-            if (. "$($Env:ProgramFiles)\docker\docker" ps -f "ancestor=cdscdockerswarm-tls:latest" -q) {
-                return $this.Ensure = [Ensure]::Present
+        if ($SwarmManagerIsMe -and $this.Ensure -eq [Ensure]::Present) {     
+            Write-verbose "This node should be the CA"
+            if (. "$($Env:ProgramFiles)\docker\docker" ps -f "ancestor=pscripted/dsc-dockerswarm-tls:latest" -q) {
+                Write-verbose "CA Container is running"
+                $this.Ensure = [Ensure]::Present
             }
             else {
-                return $this.Ensure = [Ensure]::Absent
+                Write-verbose "CA Container is not running"
+                $this.Ensure = [Ensure]::Absent                
             }
         }
         else {
             $CertExists = Test-Path $env:ALLUSERSPROFILE\docker\certs.d\cert.pem
             $KeyExists = Test-Path $env:ALLUSERSPROFILE\docker\certs.d\key.pem
             if ($CertExists -and $KeyExists) {
-                 return $this.Ensure = [Ensure]::Present            
+                $this.Ensure = [Ensure]::Present            
             }
             else{
-                return $this.Ensure = [Ensure]::Absent
+                $this.Ensure = [Ensure]::Absent
             }
         }
+        return $this
     }    
 }
 
@@ -811,17 +815,26 @@ function Install-cDSCSwarmTLSCert {
     
     begin {
         if (!(Test-Path $env:ALLUSERSPROFILE\docker\certs.d)) {
-        mkdir $env:ALLUSERSPROFILE\docker\certs.d
+            mkdir $env:ALLUSERSPROFILE\docker\certs.d | out-null
         }
         if (!(Test-Path $env:USERPROFILE\.docker)) {
-            mkdir $env:USERPROFILE\.docker
+            mkdir $env:USERPROFILE\.docker | out-null
         }
     }
     
     process {
+        
         [array]$ips = (get-netipaddress -AddressState Preferred -AddressFamily IPv4).IPAddress
+        if (($SwarmMasterIP -eq "localhost") -or ($ips -contains $SwarmMasterIP)) {
+            $containerID = . "$($Env:ProgramFiles)\docker\docker" ps -f "ancestor=pscripted/dsc-dockerswarm-tls:latest" -q
+            $containerIP = . "$($Env:ProgramFiles)\docker\docker" inspect $containerID -f '{{json .NetworkSettings.Networks.nat.IPAddress}}'
+            $CAContainerURI = "$($containerIP | convertfrom-json):$port"
+        }
+        else {
+            $CAContainerURI = "$($SwarmMasterIP):$port"
+        }
         try {
-            $Certs = Invoke-RestMethod "http://$($SwarmMasterIP):$port/swarmnode" -Method Post -Body (@{servername=$env:computername;ips=$ips} | Convertto-JSON) -ContentType "application/JSON" 
+            $Certs = Invoke-RestMethod "http://$CAContainerURI/swarmnode" -Method Post -Body (@{servername=$env:computername;ips=$ips} | Convertto-JSON) -ContentType "application/JSON" 
         }
         catch {
             Write-Error "Unable to connect to TLS Enrollment Server. AutoEnroll must be enabled in the DSC Configuration"
