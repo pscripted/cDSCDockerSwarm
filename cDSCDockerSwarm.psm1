@@ -284,13 +284,6 @@ class cDockerConfig {
     [DscProperty()]
     [boolean] $ExposeAPI
 
-    #Identify locations artifacts for TLS configuration
-    [DscProperty()]
-    [string]$certLocationsJSON = '[{"privateKeyLocation" : "C:\ProgramData\docker\certs.d\key.pem"},`
-    {"publicKeyLocation" : "C:\ProgramData\docker\certs.d\cert.pem"},`
-    {"publicKeyCALocation" : "C:\ProgramData\docker\certs.d\ca.pem"}]'
-    
-
     #Restart docker on any chane of the configuration
     [DscProperty()]
     [boolean] $RestartOnChange
@@ -397,51 +390,52 @@ class cDockerConfig {
         if ($this.Labels) {
             $pendingConfiguration | Add-Member -Name "labels" -Value $this.Labels -MemberType NoteProperty
         }
-
-        $certLocations = ConvertFrom-Json $this.certLocationsJSON
-        
+        #Name of required docker config keys, and default file names
+        $tlskeys = @{"tlscacert"="ca.pem";"tlscert"="cert.pem";"tlskey"="key.pem"}
         $fileExists = $true
+        $defaultApiPort = "2375"
 
-        $certLocations | ForEach-Object {
-            $PropName = $_.PSObject.Properties.Name
-            if (-not (test-path($_.$PropName))) {$fileExists =  $false}
-        }
-
-        if ($this.EnableTLS -and $fileExists) {
-            #Add TLS                 
-            $pendingConfiguration | Add-Member -MemberType NoteProperty -Name  "tlscacert" -Value ($certLocations.publicKeyCALocation | out-string).Trim()
-            $pendingConfiguration | Add-Member -MemberType NoteProperty -Name  "tlscert" -Value ($certLocations.publicKeyLocation | out-string).Trim()
-            $pendingConfiguration | Add-Member -MemberType NoteProperty -Name  "tlskey" -Value ($certLocations.privateKeyLocation | out-string).Trim()
-            $pendingConfiguration | Add-Member -MemberType NoteProperty -Name  "tlsverify" -Value $true     
-            #Adjust port for TLS
-            if ($this.exposeApi -eq $true) {
-                if ($this.DaemonBinding) {
-                    $binding = $this.DaemonBinding            
+        if ($this.EnableTLS) {
+            foreach ($cert in $tlskeys.GetEnumerator()) {
+                if (-not $pendingConfiguration.psobject.Properties[$cert.name]) {          
+                    #Create the default if it's not there
+                    $pendingConfiguration | Add-Member -MemberType NoteProperty -Name $cert.name -Value "C:\ProgramData\docker\certs.d\$($cert.Value)"
                 }
-                else {
-                    $binding = "tcp://0.0.0.0:2376"
+                if (-not (test-path $pendingConfiguration.psobject.Properties[$cert.name].Value )) { 
+                    $fileExists =  $false 
                 }
-                $pendingConfiguration | Add-Member -Name "hosts" -MemberType NoteProperty -Value @($binding, "npipe://")
-            }       
+            }
+            if ($fileExists) {
+                #If the certs exist, enable TLS
+                $defaultApiPort = "2376"
+                $pendingConfiguration | Add-Member -MemberType NoteProperty -Name  "tlsverify" -Value $true   
+            }
+            else {
+                foreach ($cert in $tlskeys.GetEnumerator()) {
+                    #without all the files, clear the key from the config to be written
+                    $pendingConfiguration.PSObject.Properties.Remove($cert.name)
+                }
+            }
         }
         else {
-            if ($this.exposeApi -eq $true) {
-                if ($this.DaemonBinding) {
-                    $binding = $this.DaemonBinding            
-                }
-                else {
-                    $binding = "tcp://0.0.0.0:2375"
-                }
-                $pendingConfiguration | Add-Member -Name "hosts" -MemberType NoteProperty -Value @($binding, "npipe://")
+            foreach ($cert in $tlskeys.GetEnumerator()) {
+                #if certs are specified in config but TLS is not enabled, remove them from the final config
+                $pendingConfiguration.PSObject.Properties.Remove($cert.name)
             }
         }
 
+        if ($this.exposeApi -eq $true) {
+            if ($this.DaemonBinding) {
+                $binding = $this.DaemonBinding            
+            }
+            else {
+                $binding = "tcp://0.0.0.0:$($defaultApiPort)"
+            }
+            $pendingConfiguration | Add-Member -Name "hosts" -MemberType NoteProperty -Value @($binding, "npipe://")
+        }
         return $pendingConfiguration | ConvertTo-Json
     }
-    
-
 }
-
 
 # [DscResource()] indicates the class is a DSC resource.
 [DscResource()]
